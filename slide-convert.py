@@ -1,8 +1,6 @@
 import re
-import shutil
 from pathlib import Path
 from pptx2md import convert, ConversionConfig
-
 
 class SlidevConverter:
     def __init__(self):
@@ -10,7 +8,6 @@ class SlidevConverter:
 
     def clean_text(self, text):
         """Clean up weird characters and formatting artifacts"""
-        # Fix smart quotes and weird characters
         replacements = {
             'Ã¢â‚¬â„¢': "'",
             'Ã¢â‚¬Å"': '"',
@@ -28,7 +25,7 @@ class SlidevConverter:
         # Remove stray backslashes
         text = re.sub(r'\\(?![\\*_\[\]])', '', text)
 
-        # Fix spacing issues - collapse multiple spaces to single space
+        # Collapse multiple spaces
         text = re.sub(r'  +', ' ', text)
 
         return text
@@ -39,13 +36,13 @@ class SlidevConverter:
         text = re.sub(r'__\s*\*\*\s*([^*]+?)\s*\*\*\s*__', r'**\1**', text)
         text = re.sub(r'__\s*_([^_]+?)_\s*__', r'*\1*', text)
 
-        # Convert standalone __ to ** for bold (but not in middle of words)
+        # Convert standalone __ to ** for bold
         text = re.sub(r'__([^_\s][^_]*?[^_\s])__', r'**\1**', text)
 
-        # Convert single _ to * for italics (consistent with markdown)
+        # Convert single _ to * for italics
         text = re.sub(r'(?<!\w)_([^_\s][^_]*?[^_\s])_(?!\w)', r'*\1*', text)
 
-        # Clean up any remaining weird spacing around formatting
+        # Clean up spacing around formatting
         text = re.sub(r'\*\*\s+', '**', text)
         text = re.sub(r'\s+\*\*', '**', text)
         text = re.sub(r'\*\s+', '*', text)
@@ -74,7 +71,7 @@ class SlidevConverter:
         is_short_statement = len(clean) < 80 and clean.count('.') == 0
         has_header_keywords = any(kw in clean.lower() for kw in [
             'background job', 'the web side', 'what is', 'why', 'how',
-            'choosing', 'part ', 'lesson', 'introduction'
+            'choosing', 'part ', 'lesson', 'introduction', 'history'
         ])
         ends_with_colon = clean.endswith(':')
         is_question = clean.endswith('?')
@@ -83,7 +80,6 @@ class SlidevConverter:
 
     def process_line(self, line):
         """Process a single line appropriately"""
-        original_line = line
         line = line.rstrip()
 
         if not line.strip():
@@ -97,7 +93,6 @@ class SlidevConverter:
         # Check for bullet point FIRST
         bullet_match = re.match(r'^(\s*)\*\s+(.+)$', line)
         if bullet_match:
-            indent = bullet_match.group(1)
             content = bullet_match.group(2)
 
             # Clean and normalize the content
@@ -114,7 +109,7 @@ class SlidevConverter:
             clean = self.clean_text(clean)
             return f"# {clean}"
 
-        # Regular paragraph text
+        # Regular paragraph text - convert to bullet point by default
         processed = self.clean_text(line)
         processed = self.normalize_formatting(processed)
 
@@ -122,7 +117,8 @@ class SlidevConverter:
         if processed.startswith('**') and processed.endswith('**') and processed.count('**') == 2:
             processed = processed[2:-2]
 
-        return processed
+        # Convert regular text lines to bullet points
+        return f"  * {processed}"
 
     def convert_image_path(self, image_line, presentation_name, slide_number=1):
         """Convert pptx2md image paths to Slidev-compatible paths"""
@@ -234,7 +230,6 @@ layout: cover
 
         return slidev_content
 
-
 def convert_presentations():
     """Main conversion function"""
     converter = SlidevConverter()
@@ -299,7 +294,6 @@ def convert_presentations():
             print(f"Failed to convert {pptx_file.name}: {e}")
             import traceback
             traceback.print_exc()
-
 
 if __name__ == "__main__":
     convert_presentations()
