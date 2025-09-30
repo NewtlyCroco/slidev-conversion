@@ -2,6 +2,7 @@ import re
 from pathlib import Path
 from pptx2md import convert, ConversionConfig
 
+
 class SlidevConverter:
     def __init__(self):
         self.image_pattern = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
@@ -35,6 +36,11 @@ class SlidevConverter:
         # Remove problematic patterns like __  ** text **  __
         text = re.sub(r'__\s*\*\*\s*([^*]+?)\s*\*\*\s*__', r'**\1**', text)
         text = re.sub(r'__\s*_([^_]+?)_\s*__', r'*\1*', text)
+
+        # Fix malformed patterns like *l*oad*__ or _**evealed*__
+        text = re.sub(r'\*([a-z])\*([a-z]+)\*__', r'**\1\2**', text)
+        text = re.sub(r'_\*\*([a-z]+)\*__', r'**\1**', text)
+        text = re.sub(r'\*_\*\*([^*]+?)\*__', r'**\1**', text)
 
         # Convert standalone __ to ** for bold
         text = re.sub(r'__([^_\s][^_]*?[^_\s])__', r'**\1**', text)
@@ -162,16 +168,24 @@ class SlidevConverter:
             if processed:
                 main_content.append(processed)
 
-        # Clean up excessive empty lines
+        # Clean up consecutive duplicate bullets and excessive empty lines
         cleaned = []
+        prev_line = None
         prev_empty = False
+
         for line in main_content:
+            # Skip if exact duplicate of previous line
+            if line == prev_line:
+                continue
+
             if line.strip():
                 cleaned.append(line)
                 prev_empty = False
+                prev_line = line
             elif not prev_empty:
                 cleaned.append('')
                 prev_empty = True
+                prev_line = None
 
         # Build result
         if images:
@@ -185,17 +199,17 @@ class SlidevConverter:
     def create_slidev_header(self, title):
         """Create the Slidev header"""
         return f"""---
-defaults:
-  layout: two-cols
-mdc: true
-fonts:
-  mono: Cascadia Mono
-  sans: Atkinson Hyperlegible
-layout: cover
----
+    defaults:
+      layout: two-cols
+    mdc: true
+    fonts:
+      mono: Cascadia Mono
+      sans: Atkinson Hyperlegible
+    layout: cover
+    ---
 
-# {title}
-"""
+    # {title}
+    """
 
     def convert_to_slidev(self, markdown_content, title, presentation_name):
         """Convert to Slidev format"""
@@ -229,6 +243,7 @@ layout: cover
             slidev_content += "\n---\nlayout: end\n---\n"
 
         return slidev_content
+
 
 def convert_presentations():
     """Main conversion function"""
@@ -294,6 +309,7 @@ def convert_presentations():
             print(f"Failed to convert {pptx_file.name}: {e}")
             import traceback
             traceback.print_exc()
+
 
 if __name__ == "__main__":
     convert_presentations()
