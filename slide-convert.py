@@ -3,16 +3,14 @@ import shutil
 from pathlib import Path
 from pptx2md import convert, ConversionConfig
 
+
 class SlidevConverter:
     def __init__(self):
-        # Patterns for cleaning up content
         self.image_pattern = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
-        # Match bold patterns that shouldn't be headers
-        self.inline_bold_pattern = re.compile(r'\*\*([^*\n]+)\*\*')
 
     def clean_text(self, text):
-        """Clean up weird characters and formatting"""
-        # Fix smart quotes and other weird characters
+        """Clean up weird characters and formatting artifacts"""
+        # Fix smart quotes and weird characters
         replacements = {
             'Ã¢â‚¬â„¢': "'",
             'Ã¢â‚¬Å"': '"',
@@ -27,8 +25,35 @@ class SlidevConverter:
         for old, new in replacements.items():
             text = text.replace(old, new)
 
-        # Remove stray backslashes but be careful with intentional escapes
+        # Remove stray backslashes
         text = re.sub(r'\\(?![\\*_\[\]])', '', text)
+
+        # Fix spacing issues - collapse multiple spaces to single space
+        text = re.sub(r'  +', ' ', text)
+
+        return text
+
+    def normalize_formatting(self, text):
+        """Normalize bold and italic formatting to consistent syntax"""
+        # Remove problematic patterns like __  ** text **  __
+        text = re.sub(r'__\s*\*\*\s*([^*]+?)\s*\*\*\s*__', r'**\1**', text)
+        text = re.sub(r'__\s*_([^_]+?)_\s*__', r'*\1*', text)
+
+        # Convert standalone __ to ** for bold (but not in middle of words)
+        text = re.sub(r'__([^_\s][^_]*?[^_\s])__', r'**\1**', text)
+
+        # Convert single _ to * for italics (consistent with markdown)
+        text = re.sub(r'(?<!\w)_([^_\s][^_]*?[^_\s])_(?!\w)', r'*\1*', text)
+
+        # Clean up any remaining weird spacing around formatting
+        text = re.sub(r'\*\*\s+', '**', text)
+        text = re.sub(r'\s+\*\*', '**', text)
+        text = re.sub(r'\*\s+', '*', text)
+        text = re.sub(r'\s+\*(?!\*)', '*', text)
+
+        # Remove empty formatting
+        text = re.sub(r'\*\*\s*\*\*', '', text)
+        text = re.sub(r'\*\s*\*', '', text)
 
         return text
 
@@ -36,73 +61,68 @@ class SlidevConverter:
         """Determine if a line should be a header"""
         line = line.strip()
 
-        # Already a header
         if line.startswith('#'):
             return True
 
         # Remove formatting to check content
         clean = re.sub(r'[*_]', '', line).strip()
 
-        # Empty or very short
-        if len(clean) < 3:
+        if len(clean) < 3 or len(clean) > 120:
             return False
 
-        # Too long to be a header
-        if len(clean) > 100:
-            return False
+        # Check for header indicators
+        is_short_statement = len(clean) < 80 and clean.count('.') == 0
+        has_header_keywords = any(kw in clean.lower() for kw in [
+            'background job', 'the web side', 'what is', 'why', 'how',
+            'choosing', 'part ', 'lesson', 'introduction'
+        ])
+        ends_with_colon = clean.endswith(':')
+        is_question = clean.endswith('?')
 
-        # Check for header-like qualities
-        header_indicators = [
-            clean.isupper(),  # All caps
-            clean.endswith(('?', ':')),  # Questions or labels
-            any(keyword in clean.lower() for keyword in [
-                'history', 'what is', 'why', 'how', 'choosing',
-                'part ', 'lesson', 'introduction', 'conclusion'
-            ]),
-            # Single sentence without much punctuation
-            clean.count('.') <= 1 and clean.count(',') <= 2
-        ]
-
-        return any(header_indicators)
+        return (is_short_statement and (has_header_keywords or ends_with_colon)) or is_question
 
     def process_line(self, line):
-        """Process a single line, converting it appropriately"""
+        """Process a single line appropriately"""
+        original_line = line
         line = line.rstrip()
 
-        # Empty line
         if not line.strip():
             return ''
 
-        # Already formatted as header
+        # Already a header
         if line.strip().startswith('#'):
-            return self.clean_text(line)
+            clean = self.clean_text(line)
+            return self.normalize_formatting(clean)
 
-        # Check if this should be a header
+        # Check for bullet point FIRST
+        bullet_match = re.match(r'^(\s*)\*\s+(.+)$', line)
+        if bullet_match:
+            indent = bullet_match.group(1)
+            content = bullet_match.group(2)
+
+            # Clean and normalize the content
+            content = self.clean_text(content)
+            content = self.normalize_formatting(content)
+
+            # Ensure proper indentation (2 spaces for bullets)
+            return f"  * {content}"
+
+        # Check if should be header
         if self.is_likely_header(line):
-            # Remove bold/italic formatting
-            clean = re.sub(r'\*+([^*]+)\*+', r'\1', line.strip())
-            clean = re.sub(r'__([^_]+)__', r'\1', clean)
-            return f"# {self.clean_text(clean)}"
+            clean = re.sub(r'^[*\s]*', '', line)  # Remove leading * and spaces
+            clean = re.sub(r'[*_]+([^*_]+)[*_]+', r'\1', clean)  # Remove formatting
+            clean = self.clean_text(clean)
+            return f"# {clean}"
 
-        # Bullet point
-        if line.strip().startswith('*'):
-            # Proper indentation (2 spaces)
-            indent = len(line) - len(line.lstrip())
-            bullet_match = re.match(r'^(\s*)\*\s*(.+)$', line)
-            if bullet_match:
-                content = bullet_match.group(2)
-                # Convert __text__ to **text** for bold in bullets
-                content = re.sub(r'__([^_]+)__', r'**\1**', content)
-                # Clean up excessive bold
-                content = re.sub(r'\*\*\s*\*\*', '', content)
-                return f"  * {self.clean_text(content)}"
+        # Regular paragraph text
+        processed = self.clean_text(line)
+        processed = self.normalize_formatting(processed)
 
-        # Regular paragraph text - remove excessive bold
-        # Only keep bold for actual emphasis, not whole sentences
-        processed = re.sub(r'^\*\*(.+)\*\*$', r'\1', line.strip())
-        processed = re.sub(r'__(.+)__', r'*\1*', processed)  # Convert __ to * for italics
+        # Don't wrap entire paragraphs in bold
+        if processed.startswith('**') and processed.endswith('**') and processed.count('**') == 2:
+            processed = processed[2:-2]
 
-        return self.clean_text(processed)
+        return processed
 
     def convert_image_path(self, image_line, presentation_name, slide_number=1):
         """Convert pptx2md image paths to Slidev-compatible paths"""
@@ -111,7 +131,6 @@ class SlidevConverter:
             alt_text = img_match.group(1)
             original_path = img_match.group(2)
 
-            # Convert path separators
             clean_path = original_path.replace('%5C', '/')
             filename = clean_path.split('/')[-1]
 
@@ -127,14 +146,12 @@ class SlidevConverter:
 
     def process_slide_content(self, content, presentation_name, slide_number=1):
         """Process content for a slide"""
-        content = self.clean_text(content)
-
         lines = content.split('\n')
         main_content = []
         images = []
 
         for line in lines:
-            # Skip empty lines initially
+            # Skip empty lines during processing
             if not line.strip():
                 continue
 
@@ -149,7 +166,7 @@ class SlidevConverter:
             if processed:
                 main_content.append(processed)
 
-        # Remove consecutive empty lines
+        # Clean up excessive empty lines
         cleaned = []
         prev_empty = False
         for line in main_content:
@@ -217,6 +234,7 @@ layout: cover
 
         return slidev_content
 
+
 def convert_presentations():
     """Main conversion function"""
     converter = SlidevConverter()
@@ -281,6 +299,7 @@ def convert_presentations():
             print(f"Failed to convert {pptx_file.name}: {e}")
             import traceback
             traceback.print_exc()
+
 
 if __name__ == "__main__":
     convert_presentations()
